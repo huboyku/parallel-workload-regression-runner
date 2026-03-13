@@ -1,0 +1,16 @@
+jobs:
+  - name: sleep1
+    command: python3 workloads/sleep_job.py
+    expected_exit: 0
+
+  - name: sleep2
+    command: python3 workloads/sleep_job.py
+    expected_exit: 0
+
+  - name: sleep3
+    command: python3 workloads/sleep_job.py 
+    expected_exit: 0
+   
+  - name: fail1
+    command: python3 workloads/fail_job.py
+    expected_exit: 1    
