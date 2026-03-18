@@ -8,7 +8,7 @@ args= parser.parse_args()
 
 print("job started")
 
-time.sleep(5)
+time.sleep(4)
 
 output_dir_result = os.path.join(args.output_dir,"result.txt")
 
