@@ -1,31 +1,31 @@
 jobs:
   - name: sleep1
-    command: python3 workloads/sleep_job.py
+    command: ["python3", "workloads/sleep_job.py"]
     expected_exit: 0
     expected_files: 
       - result.txt
     timeout_sec: 5
 
   - name: sleep2
-    command: python3 workloads/sleep_job.py
+    command: ["python3", "workloads/sleep_job.py"]
     expected_exit: 0
     expected_files: 
       - result.txt
     timeout_sec: 5
 
   - name: sleep3
-    command: python3 workloads/sleep_job.py 
+    command: ["python3", "workloads/sleep_job.py"]
     expected_exit: 0
     expected_files: 
       - result.txt
     timeout_sec: 1
 
   - name: fail1
-    command: python3 workloads/fail_job.py
+    command: ["python3", "workloads/fail_job.py"]
     expected_exit: 1    
     timeout_sec: 5
 
   - name: broken
-    command: python3 workloads/not_exist.py
+    command: ["python3", "workloads/not_exist.py"]
     expected_exit: 0 
     timeout_sec: 5
