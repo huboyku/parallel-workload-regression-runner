@@ -1,61 +1,115 @@
 # Parallel Workload Regression Runner
 
-A lightweight Python-based workload runner that reads jobs from a YAML configuration file, executes them in parallel, captures per-job logs, and validates regression outcomes.
+A dependency-aware parallel workload runner designed to simulate regression systems commonly used in EDA (Electronic Design Automation) and large-scale software testing workflows.
 
-## Features
+This tool executes jobs with dependency constraints, captures execution results, and produces structured summaries for analysis.
 
-- YAML-based job configuration
-- Parallel job execution
-- Configurable worker count
-- Per-job run directories
-- stdout and stderr logging
-- Regression validation using expected exit codes
 
-## Project structure
+## 🚀 Features
+- Dependency-aware scheduling
+- Parallel execution using ProcessPoolExecutor
+- Failure handling & skip logic
+- Timeout support
+- Output validation
+- Structured result evaluation (PASS / FAIL / ERROR / TIMEOUT / SKIPPED)
+- Run artifacts (logs + summary.json)
 
-parallel-runner/
-runner.py
-config.yaml
-workloads/
-sleep_job.py
-fail_job.py
-runs/
 
-## Example config
+## 🧠 System Overview
 
+Scheduler    
+- Tracks pending, running, completed jobs
+- Enforces dependency constraints
+- Submits ready jobs
+
+Execution Engine
+- Runs jobs via subprocess
+- Captures stdout, stderr, return code, duration
+- Handles timeout and errors
+
+Result Evaluation
+- Maps execution results to regression status
+- Validates exit codes and expected outputs
+
+
+## 📁 Project Structure
+
+```
+.
+├── main.py
+├── models.py
+├── config_loader.py
+├── runs/
+│   └── <run_id>/
+│       ├── job1/
+│       │   ├── stdout.log
+│       │   └── stderr.log
+│       └── summary.json
+└── configs/
+    └── sample.yaml
+```
+
+## ⚙️ Job Configuration (YAML)
+
+```
 jobs:
-  - name: sleep1
-    command: python3 workloads/sleep_job.py
+  - name: job_a
+    command: ["python", "worker_sleep.py", "1"]
     expected_exit: 0
+    timeout_sec: 5
+    expected_files: []
+    depends_on: []
 
-  - name: fail1
-    command: python3 workloads/fail_job.py
-    expected_exit: 1
+  - name: job_b
+    command: ["python", "worker_sleep.py", "2"]
+    depends_on: ["job_a"]
 
-## Usage
+  - name: job_c
+    command: ["python", "worker_sleep.py", "3"]
+    depends_on: ["job_a"]
+```
 
-Run with default workers:
+## ▶️ How to Run
 
-python3 runner.py config.yaml
+python main.py configs/sample.yaml --max-workers 2
 
-Run with custom workers:
 
-python3 runner.py config.yaml --max-workers 2
+## 📊 Example Output
 
-## Example output
+- Run finished
+- Total duration: 5.23s
+- Total jobs: 3
+- Passed tests: 2
+- Failed tests: 1
+- Error tests: 0
+- Timed out tests: 0
+- Skipped tests: 0
 
-Run finished  
-Total jobs: 4  
-Passed tests: 4  
-Failed tests: 0  
+Summary is written to:
 
-sleep1 → PASS (5.09s)  
-sleep2 → PASS (5.07s)  
-sleep3 → PASS (5.09s)  
-fail1 → PASS (0.04s)  
+runs/<run_id>/summary.json
 
-Total duration: 5.13
 
-## Notes
+## 🧪 Validation Checks
+- Duplicate job names
+- Missing dependencies
+- Cyclic dependencies (DFS-based detection)
 
-A job passes when its actual exit code matches the expected exit code defined in the YAML configuration.
+## 📌 Current Limitations
+- Uses requested resource simulation only
+- Supports subprocess-based jobs only
+- No retry mechanism yet
+- No resource-aware scheduling yet
+
+## 🔮 Future Improvements
+- Resource-aware scheduling
+- Retry mechanism
+- Structured logging
+- DAG visualization
+- Run comparison
+
+## 🛠️ Tech Stack
+- Python
+- concurrent.futures
+- subprocess
+- YAML

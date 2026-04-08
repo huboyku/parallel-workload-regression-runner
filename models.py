@@ -13,6 +13,7 @@ class JobStatus(Enum):
     FAIL = "FAIL"
     ERROR = "ERROR"
     TIMEOUT = "TIMEOUT"
+    SKIPPED = "SKIPPED"
 
 class ExecutionStatus(Enum):
     COMPLETED = "COMPLETED"
@@ -26,6 +27,7 @@ class JobConfig:
     expected_exit : int = 0 
     timeout_sec : int = 5
     expected_files : list[str] = field(default_factory=list)
+    depends_on : list[str] = field(default_factory=list)
 
 @dataclass
 class ExecutionResult:

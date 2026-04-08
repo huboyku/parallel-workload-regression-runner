@@ -2,8 +2,8 @@ import yaml
 import subprocess 
 import time
 import argparse
-from typing import Any 
-from concurrent.futures import ProcessPoolExecutor
+from typing import Any, Dict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import os 
 from datetime import datetime
 import json 
@@ -22,7 +22,7 @@ def run_single_job(job_input: JobRunRequest) -> ExecutionResult:
 
     run_dir = os.path.join(job_input.base_run_dir, name)
     os.makedirs(run_dir,exist_ok=True)
-    
+
     execution_command = command + ["--output-dir", run_dir]
 
     start = time.perf_counter()
@@ -74,6 +74,129 @@ def run_single_job(job_input: JobRunRequest) -> ExecutionResult:
         stdout = stdout,
         stderr = stderr)
 
+def run_scheduler(job_configs, max_workers, base_run_dir) -> Dict[str, JobResult]:
+    pending_jobs = {job.name : job for job in job_configs}
+    running_futures = {}
+    completed_job_results = {}
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+
+        while pending_jobs or running_futures:
+
+            for job_name, job in list(pending_jobs.items()):
+
+                dependencies = job.depends_on
+
+                # Case 1: no dependencies -> ready
+                if not dependencies:
+                    #job is ready
+                    job_input = JobRunRequest(job =job, base_run_dir = base_run_dir)
+                    future  = executor.submit(run_single_job, job_input)
+                    print(future)
+                    running_futures[future] = job_name
+                    pending_jobs.pop(job_name)
+                    continue
+                
+                # Case 2: has dependencies -> check their status
+                all_passed = True
+                any_failed = False
+
+                for dep in dependencies:
+                    # Has not finished yet
+                    if dep not in completed_job_results:
+                        all_passed = False
+                        break
+                    
+                    # Finished but did not passed
+                    if completed_job_results[dep].status != JobStatus.PASS: 
+                        all_passed = False
+                        any_failed = True 
+                        break
+                
+                if all_passed:
+                    # ready
+                    job_input = JobRunRequest(job = job, base_run_dir = base_run_dir)
+                    future = executor.submit(run_single_job, job_input)
+                    running_futures[future] = job_name
+                    pending_jobs.pop(job_name)
+
+                elif any_failed:
+                    # skipped
+                    completed_job_results[job_name] = JobResult(
+                        name=job_name,
+                        status=JobStatus.SKIPPED,
+                        duration=0.0,
+                        returncode=None,
+                        failure_reason="Dependency failed",
+                        missing_files=[],
+                    )
+                    pending_jobs.pop(job_name)
+                    
+                else:
+                    #blocked
+                    pass
+
+            if running_futures:
+                done_future = next(as_completed(running_futures))
+                job_name = running_futures.pop(done_future)
+
+                result = done_future.result()
+                job_result = evaluate_result(result)
+
+                completed_job_results[job_name] = job_result
+
+    return completed_job_results
+
+def validate_job_configs(job_configs):
+    job_names = [job.name for job in job_configs]
+    #check duplicates, error for which is duplicated, check missing dep, check cyclic
+    seen = set()
+    duplicates = set()
+
+    for name in job_names:
+        if name in seen:
+            duplicates.add(name)
+        else:
+            seen.add(name)
+    if duplicates:
+        raise ValueError(f"Duplicate job names: {duplicates}")
+
+    missing_dep = []
+    for job in job_configs:
+        dependencies = job.depends_on or []
+        for dep in dependencies:
+            if dep not in set(job_names):
+                missing_dep.append((job.name,dep))
+        if missing_dep:
+            raise ValueError("\n".join(f"Unknown/ Missing deps are {dep} for {job}" for job, dep in missing_dep))
+
+    graph = {}
+    for job in job_configs:
+        dependencies = job.depends_on or []
+        graph[job.name] = dependencies
+
+    visiting = set()
+    visited = set()
+
+    def dfs(node):
+        if node in visiting: 
+            raise ValueError(f"Cycle detected at job '{node}'")
+
+        if node in visited:
+            return
+
+        visiting.add(node)
+
+        for dep in graph[node]:
+            dfs(dep)
+        
+        visiting.remove(node)
+        visited.add(node)
+        
+    for node in graph:
+        if node not in visited: 
+            dfs(node)
+
 def evaluate_result(result:ExecutionResult) -> JobResult:
     if result.status == ExecutionStatus.TIMEOUT:
             regression_status = JobStatus.TIMEOUT
@@ -106,11 +229,12 @@ def calculate_run_counts(job_results) -> RunCounts:
         "passed" : sum(1 for item in job_results if item.status == JobStatus.PASS),
         "failed" : sum(1 for item in job_results if item.status == JobStatus.FAIL),
         "timeout": sum(1 for item in job_results if item.status == JobStatus.TIMEOUT),
-        "error"  : sum(1 for item in job_results if item.status == JobStatus.ERROR)
+        "error"  : sum(1 for item in job_results if item.status == JobStatus.ERROR),
+        "skipped": sum(1 for item in job_results if item.status == JobStatus.SKIPPED)
     }
     return run_counts
 
-def print_run_summary(job_results, total_duration, run_counts):
+def print_regression_summary(job_results, total_duration, run_counts):
 
     print("Run finished")
     print(f"Total duration: {total_duration:.2f}s")
@@ -119,6 +243,7 @@ def print_run_summary(job_results, total_duration, run_counts):
     print(f"Failed tests: {run_counts['failed']}")
     print(f"Error tests: {run_counts['error']}")
     print(f"Timed out tests: {run_counts['timeout']}")
+    print(f"Skipped tests: {run_counts['skipped']}")
 
     for res in job_results:
         if res.failure_reason:
@@ -136,6 +261,7 @@ def build_run_summary_data(run_id, total_duration, job_results, run_counts) -> d
         "failed": run_counts['failed'],
         "errors": run_counts['error'],
         "timeout": run_counts['timeout'],
+        "skipped": run_counts['skipped'],
         "jobs": [
             {
                 **asdict(job_result),
@@ -160,21 +286,24 @@ def main():
     base_run_dir = os.path.join("runs",run_id)
     os.makedirs(base_run_dir, exist_ok=True)
 
-    job_inputs = [JobRunRequest(job = job, base_run_dir = base_run_dir ) for job in job_configs]
+    validate_job_configs(job_configs)
 
-    with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
-        results = list(executor.map(run_single_job, job_inputs))
-    
+    completed_job_results =run_scheduler(
+        job_configs=job_configs,
+        max_workers=args.max_workers,
+        base_run_dir=base_run_dir,
+    )
+
     end = time.perf_counter()
     total_duration = end - start
 
-    job_results = [evaluate_result(result) for result in results] 
+    regression_results = list(completed_job_results.values())
+    
+    run_counts = calculate_run_counts(regression_results)
 
-    run_counts = calculate_run_counts(job_results)
+    print_regression_summary(regression_results, total_duration, run_counts)
 
-    print_run_summary(job_results, total_duration, run_counts)
-
-    run_summary_data = build_run_summary_data(run_id, total_duration, job_results, run_counts)
+    run_summary_data = build_run_summary_data(run_id, total_duration, regression_results, run_counts)
     
     summary_path = os.path.join(base_run_dir,"summary.json")
     with open(summary_path, "w") as f:
