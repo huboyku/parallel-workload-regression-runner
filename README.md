@@ -1,4 +1,4 @@
-# Parallel Workload Regression Runner
+# Parallel Workload Runner
 
 A dependency-aware parallel workload runner designed to simulate regression systems commonly used in EDA (Electronic Design Automation) and large-scale software testing workflows.
 
