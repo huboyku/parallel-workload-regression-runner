@@ -5,6 +5,7 @@ jobs:
     expected_files: 
       - result.txt
     timeout_sec: 5
+    cpu: 3
 
   - name: sleep2
     command: ["python3", "workloads/sleep_job.py"]
@@ -13,6 +14,7 @@ jobs:
       - result.txt
     timeout_sec: 5
     depends_on: [sleep1, sleep3]
+    cpu: 2  
 
   - name: sleep3
     command: ["python3", "workloads/sleep_job.py"]
@@ -21,7 +23,8 @@ jobs:
       - result.txt
     timeout_sec: 1
     depends_on: [fail1]
-
+    cpu: 1
+    
   - name: fail1
     command: ["python3", "workloads/fail_job.py"]
     expected_exit: 1    

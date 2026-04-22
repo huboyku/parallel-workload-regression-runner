@@ -7,6 +7,7 @@ class RunCounts(TypedDict):
     failed : int 
     timeout : int
     error : int
+    skipped: int
 
 class JobStatus(Enum):
     PASS = "PASS"
