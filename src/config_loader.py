@@ -1,5 +1,5 @@
 import yaml
-from models import JobConfig
+from .models import JobConfig
 
 def load_jobs_from_yaml(config_path: str) -> list[JobConfig]:
     with open(config_path) as f:

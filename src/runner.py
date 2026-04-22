@@ -2,13 +2,13 @@ import yaml
 import subprocess 
 import time
 import argparse
-from typing import Any, Dict
+from typing import Dict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import os 
 from datetime import datetime
 import json 
-from config_loader import load_jobs_from_yaml
-from models import ExecutionResult, JobRunRequest, JobResult, JobStatus, ExecutionStatus, RunCounts
+from .config_loader import load_jobs_from_yaml
+from .models import ExecutionResult, JobRunRequest, JobResult, JobStatus, ExecutionStatus, RunCounts, JobConfig
 from dataclasses import asdict
 
 def run_single_job(job_input: JobRunRequest) -> ExecutionResult:
@@ -74,7 +74,8 @@ def run_single_job(job_input: JobRunRequest) -> ExecutionResult:
         stdout = stdout,
         stderr = stderr)
 
-def run_scheduler(job_configs, max_workers, base_run_dir) -> Dict[str, JobResult]:
+def run_scheduler(job_configs: list[JobConfig], max_workers: int , base_run_dir: str) -> Dict[str, JobResult]:
+
     pending_jobs = {job.name : job for job in job_configs}
     running_futures = {}
     completed_job_results = {}
@@ -85,14 +86,13 @@ def run_scheduler(job_configs, max_workers, base_run_dir) -> Dict[str, JobResult
 
             for job_name, job in list(pending_jobs.items()):
 
-                dependencies = job.depends_on
+                dependencies = job.depends_on or []
 
                 # Case 1: no dependencies -> ready
                 if not dependencies:
                     #job is ready
                     job_input = JobRunRequest(job =job, base_run_dir = base_run_dir)
                     future  = executor.submit(run_single_job, job_input)
-                    print(future)
                     running_futures[future] = job_name
                     pending_jobs.pop(job_name)
                     continue
@@ -147,7 +147,7 @@ def run_scheduler(job_configs, max_workers, base_run_dir) -> Dict[str, JobResult
 
     return completed_job_results
 
-def validate_job_configs(job_configs):
+def validate_job_configs(job_configs: list[JobConfig]) -> None:
     job_names = [job.name for job in job_configs]
     #check duplicates, error for which is duplicated, check missing dep, check cyclic
     seen = set()
@@ -161,16 +161,23 @@ def validate_job_configs(job_configs):
     if duplicates:
         raise ValueError(f"Duplicate job names: {duplicates}")
 
+    set_job_names = set(job_names)
     missing_dep = []
+
     for job in job_configs:
         dependencies = job.depends_on or []
+
         for dep in dependencies:
-            if dep not in set(job_names):
+
+            if dep not in set_job_names:
                 missing_dep.append((job.name,dep))
-        if missing_dep:
-            raise ValueError("\n".join(f"Unknown/ Missing deps are {dep} for {job}" for job, dep in missing_dep))
+
+    if missing_dep:
+        error_msg = "\n".join(f"Job '{job}' has unknown dependency '{dep}'" for job, dep in missing_dep)
+        raise ValueError(error_msg)
 
     graph = {}
+
     for job in job_configs:
         dependencies = job.depends_on or []
         graph[job.name] = dependencies
@@ -198,9 +205,10 @@ def validate_job_configs(job_configs):
             dfs(node)
 
 def evaluate_result(result:ExecutionResult) -> JobResult:
+
     if result.status == ExecutionStatus.TIMEOUT:
-            regression_status = JobStatus.TIMEOUT
-            failure_reason = "TIMEOUT"
+        regression_status = JobStatus.TIMEOUT
+        failure_reason = "TIMEOUT"
     elif result.status == ExecutionStatus.ERROR:
         regression_status = JobStatus.ERROR
         failure_reason = "UNEXPECTED_EXCEPTION"
@@ -223,15 +231,14 @@ def evaluate_result(result:ExecutionResult) -> JobResult:
         missing_files = result.missing_files,
     )
 
-def calculate_run_counts(job_results) -> RunCounts:
-    
-    run_counts = {
-        "passed" : sum(1 for item in job_results if item.status == JobStatus.PASS),
-        "failed" : sum(1 for item in job_results if item.status == JobStatus.FAIL),
-        "timeout": sum(1 for item in job_results if item.status == JobStatus.TIMEOUT),
-        "error"  : sum(1 for item in job_results if item.status == JobStatus.ERROR),
-        "skipped": sum(1 for item in job_results if item.status == JobStatus.SKIPPED)
-    }
+def calculate_run_counts(job_results: list[JobResult]) -> RunCounts:
+    run_counts = RunCounts(
+        passed=sum(1 for item in job_results if item.status == JobStatus.PASS),
+        failed=sum(1 for item in job_results if item.status == JobStatus.FAIL),
+        timeout=sum(1 for item in job_results if item.status == JobStatus.TIMEOUT),
+        error=sum(1 for item in job_results if item.status == JobStatus.ERROR),
+        skipped=sum(1 for item in job_results if item.status == JobStatus.SKIPPED),
+    )
     return run_counts
 
 def print_regression_summary(job_results, total_duration, run_counts):
